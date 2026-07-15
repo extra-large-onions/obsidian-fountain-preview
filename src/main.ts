@@ -83,7 +83,7 @@ export default class FountainPlugin extends Plugin {
 
         this.addCommand({
             id: 'export-stitched-pdf',
-            name: 'Export stitched PDF of stats folder',
+            name: 'Export stitched PDF of the whole vault',
             callback: () => { void this.exportStitchedPdf(); },
         });
 

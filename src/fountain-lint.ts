@@ -154,8 +154,14 @@ function lintUnclosed(doc: Doc, out: Diagnostic[]): void {
             if (mark.to !== lineLen) continue; // only openers that ran off the line
             if (mark.kind !== 'boneyard' && mark.kind !== 'note') continue;
 
-            // Walk the continuation run and look for a closing mark
             const closeToken = mark.kind === 'boneyard' ? '*/' : ']]';
+
+            // A self-contained inline "/*…*/" or "[[…]]" whose close token sits at the
+            // very end of the line also has mark.to === lineLen, but it IS closed — its
+            // mark ends with the close token, which a truly-unclosed opener never can.
+            if ((doc.lines[i] ?? '').slice(mark.from, mark.to).endsWith(closeToken)) continue;
+
+            // Walk the continuation run and look for a closing mark
             let closed = false;
             for (let j = i + 1; j < doc.lines.length && doc.classes[j]?.element === mark.kind; j++) {
                 if ((doc.lines[j] ?? '').includes(closeToken)) { closed = true; break; }

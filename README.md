@@ -1,6 +1,6 @@
 # Fountain
 
-A screenplay **IDE** for Obsidian. `.fountain` files open in Obsidian's own editor with screenplay syntax highlighting, slash autocomplete, inline lint, and hover hints — plus a screenplay-aware outline panel, folder-wide statistics, stitched PDF export, and side-by-side support for multi-language scripts.
+A screenplay **IDE** for Obsidian. `.fountain` files open in Obsidian's own editor with screenplay syntax highlighting, slash autocomplete, inline lint, and hover hints — plus a screenplay-aware outline panel, vault-wide statistics, stitched PDF export, and side-by-side support for multi-language scripts.
 
 ## Features
 
@@ -52,7 +52,7 @@ Both are highlighted (dimmed), span multiple lines, and are portable — a stand
 
 ## Settings
 
-Settings → Fountain: stats folder, primary language (for PDF export), the editable autocomplete dictionary, and toggles for highlighting, autocomplete (with trigger character), inline diagnostics, translation-drift diagnostics, and hover hints.
+Settings → Fountain: primary language (for PDF export), the editable autocomplete dictionary, and toggles for highlighting, autocomplete (with trigger character), inline diagnostics, translation-drift diagnostics, and hover hints. (Statistics, PDF stitching, and autocomplete all scope to the whole vault — nothing to configure.)
 
 ## Development
 

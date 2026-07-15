@@ -159,6 +159,7 @@ Each phase is shippable. Check off as done.
 
 ### Still open / future
 
+- **Character-in-prose name hint** — a known cast member's name mentioned in *action/prose* (not as a cue) currently gets nothing. Surface it: at minimum a hover type-hint reusing `characterHover` (same card as a cue: scenes · cues · words · first appearance); optionally a subtle highlight of cast mentions in action, and/or autocomplete of cast names while typing prose. The data is already there (`buildFileIndex().characters`, `cueName`). **Hard part = disambiguation**, not detection: names that are also ordinary words (WILL/"will", MARK/"mark", ROSE/"rose"). Guardrails to decide up front — whole-word + case-aware matching, only *established* cast (appears as a cue ≥1×), prefer multi-word matches (WILL BLOOM > WILL), a stoplist for common-word names, and lean on the convention that a first appearance in action is ALL-CAPS. Recommended first slice: **hover only** (deliberate, so verb/name collisions are low-harm); add highlight limited to caps/capitalized mentions later. Scope (current file vs vault cast) TBD.
 - **Dual dialogue / (MORE)/(CONT'D)** — still out of scope (also unimplemented in PDF). The classifier tags the `^` dual-dialogue mark but nothing consumes it yet.
 - **Parser-on-core rewrite** — optional; see decision 3.
 - **Blockquote-vs-transition toggle** — see the unchecked Phase 2 item.

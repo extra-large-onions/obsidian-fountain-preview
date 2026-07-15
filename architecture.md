@@ -2,7 +2,9 @@
 
 ## Overview
 
-An Obsidian plugin that turns the native markdown editor into a **Fountain screenplay IDE**: `.fountain` files open in Obsidian's own CM6 editor with screenplay syntax highlighting, slash autocomplete, inline lint diagnostics, and hover type-hints — plus a sidebar outline panel showing scenes, characters, transitions and per-scene statistics, a folder-wide stats panel, and stitched PDF export. Multi-language screenplays (`bigfish.en.fountain` / `bigfish.vi.fountain`) get side-by-side outlines and cross-language drift diagnostics.
+An Obsidian plugin that turns the native markdown editor into a **Fountain screenplay IDE**: `.fountain` files open in Obsidian's own CM6 editor with screenplay syntax highlighting, slash autocomplete, inline lint diagnostics, and hover type-hints — plus a sidebar outline panel showing scenes, characters, transitions and per-scene statistics, a vault-wide stats panel, and stitched PDF export. Multi-language screenplays (`bigfish.en.fountain` / `bigfish.vi.fountain`) get side-by-side outlines and cross-language drift diagnostics.
+
+Everything user-facing scopes to the **whole vault** — there is no project/folder setting to configure (the stats panel, the PDF stitch, and the autocomplete vocabulary all scan every `.fountain` file in the vault). The editor and the exported PDF share one bundled screenplay font (**Cousine**, a Courier-metric typewriter face with full Vietnamese / Latin-Extended coverage) so non-Latin text renders correctly and identically on every machine.
 
 Everything editor-facing is driven by **one shared line classifier** (`fountain-syntax.ts`) so the highlighter, linter, suggester, outline and PDF layout agree by construction. See `refactor.md` for the plan that produced this shape.
 
@@ -23,9 +25,10 @@ obsidian-fountain/
 │   ├── fountain-hover.ts        hoverTooltip: character / scene stat tooltips
 │   ├── fountain-lang.ts         Language naming convention, translation groups, editor gating helpers
 │   ├── fountain-stats.ts        Per-script stats, folder scanning, mtime cache
-│   ├── fountain-pdf.ts          Stitch scripts → screenplay-formatted PDF (jsPDF)
+│   ├── fountain-pdf.ts          Stitch scripts → screenplay-formatted PDF (jsPDF), embedding Cousine
+│   ├── fountain-pdf-font.ts     Cousine TTF (base64) embedded into the PDF for Unicode/Vietnamese
 │   └── fountain-outline-view.ts ItemView: sidebar outline (single + bilingual) + stats panel
-├── styles.css                   Editor highlighting + outline/stats/suggest/hover CSS
+├── styles.css                   Editor highlighting + outline/stats/suggest/hover CSS + bundled Cousine @font-face
 ├── manifest.json                Plugin id/name/version
 ├── refactor.md                  The refactor plan this architecture came from
 └── architecture.md              This file
@@ -260,7 +263,7 @@ A file counts as Fountain when its **extension** is `fountain` (includes `x.en.f
 
 ### Highlighting (`fountain-highlight.ts`)
 
-A `ViewPlugin` that runs `classifyLines` over the document (recomputed on `docChanged`, ~9 ms for a 4,600-line feature) and emits decorations **for the viewport only**: `Decoration.line` with `cm-fountain-<element>` per line plus `Decoration.mark` for the classifier's `marks`. Formatting punctuation gets `cm-fountain-formatting cm-fountain-formatting-<kind>` and is hidden on non-active lines (centered markers become `visibility: hidden` so the text doesn't shift); content ranges (notes, boneyard, `(V.O.)` extensions, scene numbers) get styled directly. The editor container is stamped `is-fountain-script` for CSS scoping, and screenplay lines render in Courier with block indents (character 14ch, parenthetical 10ch, dialogue 6ch), right-aligned bold transitions and centered `> x <` — with the markdown blockquote chrome neutralized on `>`-forced lines. Re-implemented from the Fountain spec; class names follow the `cm-fountain-*` convention so themes targeting the old plugin keep working. If the external Fountain Editor plugin is still enabled, `main.ts` shows a one-time notice suggesting it be disabled to avoid doubled styling.
+A `ViewPlugin` that runs `classifyLines` over the document (recomputed on `docChanged`, ~9 ms for a 4,600-line feature) and emits decorations **for the viewport only**: `Decoration.line` with `cm-fountain-<element>` per line plus `Decoration.mark` for the classifier's `marks`. Formatting punctuation gets `cm-fountain-formatting cm-fountain-formatting-<kind>` and is hidden on non-active lines (centered markers become `visibility: hidden` so the text doesn't shift); content ranges (notes, boneyard, `(V.O.)` extensions, scene numbers) get styled directly. The editor container is stamped `is-fountain-script` for CSS scoping, and screenplay lines render in **Cousine** (the bundled Courier-metric font, `@font-face` in `styles.css` — see PDF Export) with block indents (character 14ch, parenthetical 10ch, dialogue 6ch), **bold** character cues, right-aligned bold transitions and centered `> x <` — with the markdown blockquote chrome neutralized on `>`-forced lines. Re-implemented from the Fountain spec; class names follow the `cm-fountain-*` convention so themes targeting the old plugin keep working. If the external Fountain Editor plugin is still enabled, `main.ts` shows a one-time notice suggesting it be disabled to avoid doubled styling.
 
 ### Autocomplete (`fountain-suggest.ts` + `fountain-hints.ts`)
 
@@ -275,7 +278,9 @@ One `EditorSuggest` with three trigger contexts (`onTrigger` is line-local and c
 Autocomplete has two halves:
 
 - **Curated dictionary** (`fountain-hints.ts`) — a `HintDictionary` of categories (`id`, `label`, `insert: 'plain' | 'transition'`, `entries`). Ships as `DEFAULT_HINTS` (transitions, shots/angles, markers), stored as JSON in `settings.hintsJson`, edited in the settings tab. `parseHintDictionary` returns `null` on any malformed edit so autocomplete silently falls back to the defaults — a broken JSON never breaks the menu. This is where the user adds their own vocabulary and categories.
-- **Contextual vocabulary** (project-wide) — characters, locations, times, transitions, markers aggregated from **every `.fountain` file in scope** (the stats folder if set, else the whole vault). The plugin keeps this in `projectVocab: FileIndex`, rebuilt debounced (400 ms) on any fountain-file vault change, with a per-file `path → {mtime, index}` cache so only changed files re-parse. `getSuggestions` does `mergeIndex(cloneIndex(projectVocab), buildFileIndex(liveBuffer))` so unsaved local names and sibling-script names both appear.
+- **Contextual vocabulary** (vault-wide) — characters, locations, times, transitions, markers aggregated from **every `.fountain` file in the vault** (`gatherProjectFiles()`). The plugin keeps this in `projectVocab: FileIndex`, rebuilt debounced (400 ms) on any fountain-file vault change, with a per-file `path → {mtime, index}` cache so only changed files re-parse. `getSuggestions` does `mergeIndex(cloneIndex(projectVocab), buildFileIndex(liveBuffer))` so unsaved local names and sibling-script names both appear.
+
+**Accepting a suggestion** (`selectSuggestion`): completions that finish an element — character cues (→ dialogue follows), transitions, a time-of-day that finalizes a scene heading, and `===` page breaks — carry `newlineAfter`, so pressing Enter commits the text and drops the cursor to a fresh line (col 0) instead of leaving it on the same line, which would immediately re-trigger the same popup. Scaffolds you keep typing into (`INT. ⟨location⟩`, `⟨location⟩ - ⟨time⟩`, notes, sections, lyrics) leave the cursor in place, honoring `cursorOffset`.
 
 `/*` (boneyard) is excluded from the slash trigger so typing a comment opener doesn't pop the menu. The linter's transition-typo rule reads `plugin.knownTransitions()` (standard + dictionary + project-used), so a deliberate custom transition is never flagged.
 
@@ -289,13 +294,15 @@ A debounced (750 ms) `@codemirror/lint` source. Single-file rules:
 | Silent cue | warning | ALL-CAPS line matching a known character but with no dialogue after it → Fountain silently reads it as action |
 | Transition typo | warning | One edit from a standard transition; also checks marker-style headings, since "CUT TOO:" stops *looking* like a transition and classifies as a marker |
 | Missing time-of-day | info | Scene heading without a `" - TIME"` suffix |
-| Unclosed boneyard / note | error / warning | `/*` without `*/`; `[[` that hits a blank line before `]]` |
+| Unclosed boneyard / note | error / warning | `/*` without `*/`; `[[` that hits a blank line before `]]`. A closed opener's mark ends with its close token, so an inline `/*…*/` or `[[…]]` (even one ending exactly at end-of-line) is correctly treated as closed and not flagged |
 
 **Bilingual drift** (separate toggle): when the file has a language infix, each on-disk sibling of its translation group is read (`vault.cachedRead` + `buildFileIndex`) and compared — scene-count mismatch (anchored on the first scene heading) and characters who never speak in the sibling (anchored on their first cue), as `info` diagnostics. Name comparison is case- and diacritic-insensitive.
 
 ### Hover type-hints (`fountain-hover.ts`)
 
 `hoverTooltip` (400 ms): hovering a **character cue** shows scenes they speak in, cues, words, and first-appearance page; hovering a **scene heading** shows scene number, start page, estimated length, speaking-cast size, and how many scenes reuse the location. Derived from the outline AST + file index on demand.
+
+**Tooltip theming.** Both these hover tooltips and the lint diagnostic tooltips are styled with Obsidian's CSS variables (`--background-secondary`, `--text-normal`, …) so they follow the active light/dark theme. CodeMirror's baseTheme paints `.cm-tooltip` white, and its hover host wraps the content in a `.cm-tooltip-section`, so the CSS matches `.cm-tooltip:has(.fountain-hover-tooltip)` (descendant, not direct child) plus `.cm-tooltip-lint` — without this the popups render as white slabs in dark mode.
 
 ### File index (`fountain-index.ts`)
 
@@ -437,7 +444,7 @@ div.fountain-stats-panel                 ← below the scrolling list, display-o
   div.fountain-stats-pathrow             ← hidden until folder button clicked
     input                                folder path; validated on commit, saved to settings
   div.fountain-stats-body                ← scrolls; four collapsible subpanels:
-    Overview             files (folder mode) · scenes · ~pages · words · speaking characters
+    Overview             files · scenes · ~pages · words · speaking characters
     Interior / exterior  scene counts per INT./EXT./INT./EXT., then per time of day (DAY, NIGHT, …)
     Locations            top 10 locations by scene count (+ "…and N more")
     Characters           top 15 by words spoken: "N scenes · N words" (+ "…and N more")
@@ -445,9 +452,9 @@ div.fountain-stats-panel                 ← below the scrolling list, display-o
 
 Per-scene character rows carry **no stats** — a character row is purely a navigation subheader. All statistics live in this bottom panel.
 
-**Scope:** with `settings.statsFolder` empty the panel shows the current file (reusing the outline's already-parsed AST — zero extra parses). With a folder set, it aggregates every `.fountain` file under that folder recursively while the outline above stays per-file.
+**Scope:** the panel always aggregates every `.fountain` file in the **whole vault** (scope label `"N files in vault"`) while the outline above stays per-file. There is no folder/scope setting; the active file is scored from its live AST and every other file from cache, so a vault-wide refresh on each keystroke costs one parse (the live file), not N.
 
-### Folder stats caching (`fountain-stats.ts`)
+### Vault stats caching (`fountain-stats.ts`)
 
 `ScriptStatsCache` maps `path → { mtime, ScriptStats }`. On each refresh (every keystroke), the **active file** is recomputed from its live AST and every other file is served from cache; a cached file only re-parses when its mtime changed, i.e. it was saved. Vault `delete`/`rename` events invalidate entries. The rescan button (`refresh-cw`) is a belt-and-braces `cache.clear()` — mtime + vault events already cover normal editing, so it should rarely be needed.
 
@@ -508,11 +515,11 @@ The stats panel stays single-scope in bilingual mode (it reflects the active fil
 
 ## PDF Export (`fountain-pdf.ts`)
 
-Command **"Export stitched PDF of stats folder"** (falls back to the active file's parent folder when no stats folder is set). All `.fountain` files in the folder, sorted by path, are concatenated — each starting on a fresh page — into `stitched-screenplay.pdf` written into that folder.
+Command **"Export stitched PDF of the whole vault"**. All `.fountain` files in the vault (`gatherProjectFiles()`, sorted by path) are concatenated — each starting on a fresh page — into `stitched-screenplay.pdf` written to the vault root.
 
-**Language filtering.** When the folder holds a translation group, stitching every file would interleave languages, so the export picks one language: the requested one (from the **"Export stitched PDF for a specific language…"** command, which shows a picker over the languages present), else the saved `primaryLanguage`, else the first language alphabetically. Files with no language infix always pass through. The output is named `stitched-screenplay.<lang>.pdf` when a language is selected. Picking a language in the command also saves it as `primaryLanguage`.
+**Language filtering.** When the vault holds a translation group, stitching every file would interleave languages, so the export picks one language: the requested one (from the **"Export stitched PDF for a specific language…"** command, which shows a picker over the languages present), else the saved `primaryLanguage`, else the first language alphabetically. Files with no language infix always pass through. The output is named `stitched-screenplay.<lang>.pdf` when a language is selected. Picking a language in the command also saves it as `primaryLanguage`.
 
-Rendering uses **jsPDF** (bundled, ~800 KB) with the built-in Courier font — no font embedding needed. US-Letter, 12 pt, 6 lines/inch, ~55 lines/page, page numbers top-right from page 2.
+Rendering uses **jsPDF** (bundled, ~800 KB). jsPDF's built-in `courier` is a standard-14 font locked to WinAnsi (Latin-1), which mangles anything outside Latin-1 (Vietnamese diacritics, etc.), so the exporter **embeds Cousine** — a Courier-metric TrueType face with full Vietnamese/Latin-Extended coverage (`fountain-pdf-font.ts`, base64, registered via `addFileToVFS`/`addFont`). Its advance width is exactly 0.6 em = 10 chars/inch at 12 pt, identical to Courier, so the layout math below is unchanged. US-Letter, 12 pt, 6 lines/inch, ~55 lines/page, page numbers top-right from page 2. (The same Cousine is used for the on-screen editor font, via `@font-face` in `styles.css`, so screen and print match.)
 
 Per-line classifier (reuses the parser's exported detection helpers) → element layout:
 
@@ -559,11 +566,10 @@ class FountainPlugin extends Plugin
 | Settings tab | `FountainSettingTab` |
 | Ribbon icon `'film'` | Opens/focuses outline panel |
 | Command `'open-fountain-outline'` | Same |
-| Command `'export-stitched-pdf'` | Stitch the stats folder into one PDF (primary language) |
+| Command `'export-stitched-pdf'` | Stitch every `.fountain` file in the vault into one PDF (primary language) |
 | Command `'export-stitched-pdf-language'` | Same, after picking a language from those present |
 
 **Settings** (persisted via `loadData`/`saveData`, all editable in the settings tab):
-- `statsFolder: string` — vault folder scanned for folder-wide stats and PDF stitching; empty means "current file only". Also editable through the folder-icon input in the stats panel.
 - `primaryLanguage: string` — default ISO-639-1 code for single-language tasks (PDF export). Empty means "first language found alphabetically". Also set implicitly by the language-picker export command.
 - `highlightScreenplay: boolean` (default true) — the in-house syntax highlighting.
 - `enableAutocomplete: boolean` (default true) + `suggestTrigger: string` (default `/`) — the slash/context suggester and its trigger character.
