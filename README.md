@@ -1,90 +1,65 @@
-# Obsidian Sample Plugin
+# Fountain
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+A screenplay **IDE** for Obsidian. `.fountain` files open in Obsidian's own editor with screenplay syntax highlighting, slash autocomplete, inline lint, and hover hints — plus a screenplay-aware outline panel, folder-wide statistics, stitched PDF export, and side-by-side support for multi-language scripts.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+### In the editor
+- **Syntax highlighting** — scene headings, character cues, dialogue, parentheticals, transitions, sections, synopses, notes and boneyard, all styled in the native editor. Formatting punctuation (`.` `@` `>` `~` `=` `!`) hides itself when the cursor leaves the line.
+- **Autocomplete** — type `/` at the start of a line for a menu of transitions, camera shots/angles, scene markers and structure scaffolds. The vocabulary is an **editable dictionary** (Settings → Fountain → Autocomplete dictionary, plain JSON grouped by category — add your own). Characters and locations are pulled in automatically from **every `.fountain` file in your project**, so a character named in one script is offered everywhere. Inside `INT. `/`EXT. ` the location and time-of-day complete from what you've used; typing a name in caps completes against your cast. The trigger character is configurable.
+- **Inline lint** — underlines probable mistakes: a cue one letter off from an existing character, a cue with no dialogue after it (which Fountain silently reads as action), a transition typo, a heading with no time of day, an unclosed `/* boneyard */` or `[[note]]`.
+- **Hover hints** — hover a character cue or scene heading to see its numbers (scenes, cues, words, pages).
 
-## First time developing plugins?
+### Outline & stats
+- A sidebar **outline** of scenes, characters, transitions and synopses, with per-scene page/line/word stats and collapsible character lists.
+- A **statistics** panel — for the current file, or aggregated across a whole folder (INT/EXT split, times of day, top locations, top characters).
+- **Stitched PDF export** of every script in a folder, in industry-standard screenplay format.
 
-Quick starting guide for new plugin devs:
+### Multi-language screenplays
+Name a script's translations `stem.LANG.fountain` with a two-letter code:
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
-
-## Releasing new releases
-
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
-
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
-
-## Adding your plugin to the community plugin list
-
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```
+bigfish.en.fountain    bigfish.vi.fountain
 ```
 
-If you have multiple URLs, you can also do:
+Open two of them at once and the outline automatically shows **side-by-side columns**, one per language, each driving its own editor. **Drift lint** compares a script against its siblings on disk and flags scene-count mismatches and characters who appear in one language but not another.
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+Because Obsidian only looks at the last dot-segment, `bigfish.en.fountain` still has extension `fountain` — so a language-tagged file behaves exactly like a plain `.fountain` everywhere, and a plain `.fountain` with no language code is untouched.
+
+## Migration note (v1.0)
+
+`.fountain` files now open in Obsidian's **native markdown editor** (previously a plain textarea). This is what enables highlighting, autocomplete, lint and hover — and it means wiki-links, embeds and frontmatter now work inside `.fountain` files too.
+
+If you previously used the separate **Fountain Editor** plugin for highlighting, **disable it** — this plugin now highlights screenplays in-house, and running both doubles up the styling. (The plugin shows a one-time reminder if it detects Fountain Editor still enabled.) You can also turn any individual feature on or off in **Settings → Fountain**.
+
+You can still write Fountain in a plain `.md` note: add `fountain` to the note's `cssclasses` or `tags` frontmatter and the editor features switch on.
+
+## Comments
+
+Use Fountain's own **boneyard** for comments you want every Fountain tool (and this plugin's PDF export and outline) to omit:
+
+```
+/* This note is omitted from the printed script and the outline. */
 ```
 
-## API Documentation
+Use **notes** for author annotations (also omitted from print, kept for you):
 
-See https://docs.obsidian.md
+```
+[[ check this beat against the treatment ]]
+```
+
+Both are highlighted (dimmed), span multiple lines, and are portable — a standalone Fountain parser understands them too. Avoid Obsidian's `%%…%%` comments here: they hide in Obsidian's preview but *aren't* Fountain, so any other Fountain tool (and the PDF export) would print them as plain text.
+
+## Settings
+
+Settings → Fountain: stats folder, primary language (for PDF export), the editable autocomplete dictionary, and toggles for highlighting, autocomplete (with trigger character), inline diagnostics, translation-drift diagnostics, and hover hints.
+
+## Development
+
+```
+npm install
+npm run dev      # watch build
+npm run build    # typecheck + production bundle
+```
+
+Architecture is documented in [`architecture.md`](architecture.md); the refactor that produced the current shape is in [`refactor.md`](refactor.md).

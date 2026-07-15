@@ -27,6 +27,8 @@ export interface FountainNode {
     endLine?: number;
     /** Explicit #N# from heading, or auto-assigned "1","2",… (scene_heading only) */
     sceneNumber?: string;
+    /** True for marker headings like "OVER BLACK:" — scene-level containers with no scene number */
+    marker?: boolean;
     /** Unique speakers, in first-appearance order (scene_heading only) */
     characters?: FountainCharacter[];
     /** Line/word/page stats (scene_heading only) */
@@ -34,26 +36,23 @@ export interface FountainNode {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+//
+// Line detection lives in the syntax core (fountain-syntax.ts) so the parser,
+// highlighter, linter and suggester all agree by construction. Re-exported here
+// so existing importers keep working.
+
+import {
+    isAllCaps, isSceneHeading, isStandardTransition, isMarkerHeading,
+    isCharacterName, skipTitlePage, stripEmphasis,
+} from './fountain-syntax';
+
+export {
+    isAllCaps, isSceneHeading, isStandardTransition, isMarkerHeading,
+    isCharacterName, skipTitlePage,
+};
 
 function countWords(text: string): number {
     return text.trim().split(/\s+/).filter(w => w.length > 0).length;
-}
-
-function skipTitlePage(lines: string[]): number {
-    const first = lines[0];
-    if (!first || !/^[A-Za-z ]+\s*:/.test(first)) return 0;
-    let lastNonIndented = true;
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i] ?? '';
-        if (line.trim() === '') {
-            if (lastNonIndented) return i + 1;
-        } else if (/^\s/.test(line)) {
-            lastNonIndented = false;
-        } else {
-            lastNonIndented = true;
-        }
-    }
-    return lines.length;
 }
 
 /** Extract optional #N# scene number suffix from a scene heading text. */
@@ -61,41 +60,6 @@ function splitSceneNumber(text: string): { text: string; sceneNumber?: string } 
     const m = /#([A-Za-z0-9.\-]+)#\s*$/.exec(text);
     if (m) return { text: text.slice(0, m.index).trim(), sceneNumber: m[1] };
     return { text };
-}
-
-function isAllCaps(trimmed: string): boolean {
-    const alpha = trimmed.replace(/[^A-Za-z]/g, '');
-    return alpha.length > 0 && alpha === alpha.toUpperCase();
-}
-
-function isSceneHeading(trimmed: string, prevBlank: boolean): boolean {
-    if (!prevBlank || !trimmed) return false;
-    if (trimmed.startsWith('.') && !trimmed.startsWith('..')) return true;
-    if (!/^(INT\.?|EXT\.?|INT\.?\/EXT\.?|I\/E\.?|EST\.?)\s/i.test(trimmed)) return false;
-    return isAllCaps(trimmed);
-}
-
-function isStandardTransition(trimmed: string, prevBlank: boolean): boolean {
-    if (!prevBlank || !trimmed) return false;
-    if (!isAllCaps(trimmed)) return false;
-    if (trimmed.endsWith('TO:')) return true;
-    if (/^FADE (IN|OUT)[.:]$/.test(trimmed)) return true;
-    return false;
-}
-
-function isCharacterName(trimmed: string, prevBlank: boolean, nextLine: string): boolean {
-    if (!prevBlank || !trimmed) return false;
-    const forced = trimmed.startsWith('@');
-    if (!forced) {
-        if (!isAllCaps(trimmed)) return false;
-        if (/^(INT\.?|EXT\.?|INT\.?\/EXT\.?|I\/E\.?|EST\.?)\s/i.test(trimmed)) return false;
-        if (isStandardTransition(trimmed, true)) return false;
-    }
-    const next = nextLine.trim();
-    if (!next) return false;
-    if (next.startsWith('(')) return true;
-    const nextAlpha = next.replace(/[^A-Za-z]/g, '');
-    return nextAlpha.length > 0 && nextAlpha !== nextAlpha.toUpperCase();
 }
 
 function extractCharacterName(text: string): string {
@@ -191,10 +155,23 @@ export function parseFountainOutline(content: string): FountainNode[] {
             prevBlank = false; continue;
         }
 
+        // Fountain emphasis (**FADE IN:**, _OVER BLACK:_) still counts for
+        // transition/marker detection — strip surrounding * and _ first.
+        const unstyled = stripEmphasis(trimmed);
+
         // ── Standard transition ─────────────────────────────────────────────
-        if (isStandardTransition(trimmed, prevBlank)) {
+        if (isStandardTransition(unstyled, prevBlank)) {
             currentSpeaker = null;
-            nodes.push({ type: 'transition', text: trimmed, level: 0, line: i });
+            nodes.push({ type: 'transition', text: unstyled, level: 0, line: i });
+            prevBlank = false; continue;
+        }
+
+        // ── Marker heading (OVER BLACK:, INTERCUT WITH:, …) ─────────────────
+        if (isMarkerHeading(unstyled, prevBlank)) {
+            finalizeScene();
+            const node: FountainNode = { type: 'scene_heading', text: unstyled, level: 0, line: i, marker: true };
+            nodes.push(node);
+            currentScene = node;
             prevBlank = false; continue;
         }
 
@@ -235,9 +212,10 @@ export function parseFountainOutline(content: string): FountainNode[] {
     }
 
     // 2. Auto-assign scene numbers for headings that don't have #N#
+    //    (markers like "OVER BLACK:" are containers, not numbered scenes)
     let autoNum = 1;
     for (const node of nodes) {
-        if (node.type === 'scene_heading') {
+        if (node.type === 'scene_heading' && !node.marker) {
             if (!node.sceneNumber) node.sceneNumber = String(autoNum);
             autoNum++;
         }
