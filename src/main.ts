@@ -1,6 +1,6 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, SuggestModal, TFile, normalizePath } from 'obsidian';
 import { FountainOutlineView, FOUNTAIN_OUTLINE_VIEW_TYPE } from './fountain-outline-view';
-import { listFountainFiles, isFountainFile } from './fountain-stats';
+import { isFountainFile } from './fountain-stats';
 import { fountainLang } from './fountain-lang';
 import { fountainHighlightExtension } from './fountain-highlight';
 import { FountainSuggest } from './fountain-suggest';
@@ -14,11 +14,9 @@ import {
 import { buildStitchedPdf } from './fountain-pdf';
 
 export interface FountainPluginSettings {
-    /** Vault folder scanned for folder-wide stats and PDF stitching. Empty = current file only. */
-    statsFolder: string;
     /**
-     * Default language (ISO-639-1) picked for single-language tasks like PDF export when a
-     * folder holds several languages. Empty = no preference (first language found alphabetically).
+     * Default language (ISO-639-1) picked for single-language tasks like PDF export when the
+     * vault holds several languages. Empty = no preference (first language found alphabetically).
      */
     primaryLanguage: string;
     /** Screenplay syntax highlighting in the native editor. */
@@ -38,7 +36,6 @@ export interface FountainPluginSettings {
 }
 
 const DEFAULT_SETTINGS: FountainPluginSettings = {
-    statsFolder: '',
     primaryLanguage: '',
     highlightScreenplay: true,
     enableAutocomplete: true,
@@ -145,12 +142,11 @@ export default class FountainPlugin extends Plugin {
         }, 400);
     }
 
-    /** Every .fountain file in scope: the stats folder if set, else the whole vault. */
+    /** Every .fountain file in the vault, sorted by path (stable stitch/scan order). */
     private gatherProjectFiles(): TFile[] {
-        const folder = this.settings.statsFolder.trim();
-        return folder
-            ? listFountainFiles(this.app, folder)
-            : this.app.vault.getFiles().filter(isFountainFile);
+        return this.app.vault.getFiles()
+            .filter(isFountainFile)
+            .sort((a, b) => a.path.localeCompare(b.path));
     }
 
     async rebuildProjectVocab(): Promise<void> {
@@ -196,17 +192,12 @@ export default class FountainPlugin extends Plugin {
 
     // ─── PDF export ──────────────────────────────────────────────────────────
 
-    /** Pick a language present in the stats folder, remember it, then export. */
+    /** Pick a language present in the vault, remember it, then export. */
     private async exportStitchedPdfForLanguage(): Promise<void> {
-        const folder = this.resolveStatsFolder();
-        if (!folder) {
-            new Notice('Fountain: set a stats folder in the outline panel (folder icon), or open a .fountain file first.');
-            return;
-        }
-        const files = listFountainFiles(this.app, folder);
+        const files = this.gatherProjectFiles();
         const langs = [...new Set(files.map((f) => fountainLang(f).lang).filter((l): l is string => l !== null))].sort();
         if (!langs.length) {
-            new Notice(`Fountain: no language-tagged files (e.g. "*.en.fountain") in "${folder}".`);
+            new Notice('Fountain: no language-tagged files (e.g. "*.en.fountain") in this vault.');
             return;
         }
         new LanguageSuggestModal(this.app, langs, (lang) => {
@@ -217,21 +208,15 @@ export default class FountainPlugin extends Plugin {
     }
 
     /**
-     * Concatenate every .fountain file in the stats folder (sorted by path, each
-     * starting on a fresh page) into one screenplay-formatted PDF. When the folder
-     * holds several languages, only files for the target language (plus any
-     * untagged .fountain files) are stitched, so translations don't interleave.
+     * Concatenate every .fountain file in the vault (sorted by path, each starting
+     * on a fresh page) into one screenplay-formatted PDF. When the vault holds
+     * several languages, only files for the target language (plus any untagged
+     * .fountain files) are stitched, so translations don't interleave.
      */
     private async exportStitchedPdf(lang?: string): Promise<void> {
-        const folder = this.resolveStatsFolder();
-        if (!folder) {
-            new Notice('Fountain: set a stats folder in the outline panel (folder icon), or open a .fountain file first.');
-            return;
-        }
-
-        let files = listFountainFiles(this.app, folder);
+        let files = this.gatherProjectFiles();
         if (!files.length) {
-            new Notice(`Fountain: no .fountain files found in "${folder}".`);
+            new Notice('Fountain: no .fountain files found in this vault.');
             return;
         }
 
@@ -256,7 +241,7 @@ export default class FountainPlugin extends Plugin {
             }
             const pdf = buildStitchedPdf(scripts);
             const outName = target ? `stitched-screenplay.${target}.pdf` : 'stitched-screenplay.pdf';
-            const outPath = normalizePath(`${folder}/${outName}`);
+            const outPath = normalizePath(outName);
             await this.app.vault.adapter.writeBinary(outPath, pdf);
             notice.hide();
             new Notice(`Fountain: wrote ${outPath} (${files.length} files).`);
@@ -265,16 +250,6 @@ export default class FountainPlugin extends Plugin {
             console.error('Fountain: PDF export failed', err);
             new Notice('Fountain: PDF export failed — see developer console for details.');
         }
-    }
-
-    /** The stats folder, or the active fountain file's parent folder as a fallback. */
-    private resolveStatsFolder(): string {
-        let folder = this.settings.statsFolder.trim();
-        if (!folder) {
-            const active = this.app.workspace.getActiveFile();
-            if (isFountainFile(active)) folder = active.parent?.path ?? '';
-        }
-        return folder;
     }
 
     private async activateOutlineView(): Promise<void> {
@@ -312,21 +287,8 @@ class FountainSettingTab extends PluginSettingTab {
         };
 
         new Setting(containerEl)
-            .setName('Stats folder')
-            .setDesc('Vault folder scanned for folder-wide statistics and PDF stitching. Empty scans only the current file. (Also editable from the outline panel.)')
-            .addText((text) => text
-                .setPlaceholder('screenplays/')
-                .setValue(this.plugin.settings.statsFolder)
-                .onChange((value) => {
-                    this.plugin.settings.statsFolder = value.trim().replace(/^\/+|\/+$/g, '');
-                    save();
-                    // The autocomplete vocabulary is scoped to this folder — rescan.
-                    this.plugin.scheduleVocabRebuild();
-                }));
-
-        new Setting(containerEl)
             .setName('Primary language')
-            .setDesc('Two-letter code (en, vi, …) preferred for single-language tasks like PDF export when a folder holds several translations.')
+            .setDesc('Two-letter code (en, vi, …) preferred for single-language tasks like PDF export when the vault holds several translations.')
             .addText((text) => text
                 .setPlaceholder('en')
                 .setValue(this.plugin.settings.primaryLanguage)

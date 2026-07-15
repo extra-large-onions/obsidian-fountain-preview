@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { COUSINE_TTF_BASE64 } from './fountain-pdf-font';
 import {
     skipTitlePage,
     isSceneHeading,
@@ -28,6 +29,19 @@ const LAYOUT = {
 };
 
 type ElementType = keyof typeof LAYOUT | 'transition' | 'centered';
+
+// ─── Unicode font ───────────────────────────────────────────────────────────────
+
+// jsPDF's built-in 'courier' is a standard-14 font restricted to WinAnsi (Latin-1),
+// so anything outside Latin-1 (Vietnamese diacritics, etc.) renders mangled. We embed
+// Cousine — a Courier-metric-compatible monospace with full Vietnamese/Latin-Extended
+// coverage — and use it instead. Registered once per document.
+const SCRIPT_FONT = 'Cousine';
+
+function registerScriptFont(doc: jsPDF): void {
+    doc.addFileToVFS('Cousine-Regular.ttf', COUSINE_TTF_BASE64);
+    doc.addFont('Cousine-Regular.ttf', SCRIPT_FONT, 'normal');
+}
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 
@@ -186,7 +200,8 @@ function classifyScript(content: string): PrintElement[] {
  */
 export function buildStitchedPdf(scripts: { name: string; content: string }[]): ArrayBuffer {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
-    doc.setFont('courier', 'normal');
+    registerScriptFont(doc);
+    doc.setFont(SCRIPT_FONT, 'normal');
     doc.setFontSize(12);
 
     let pageNum = 1;

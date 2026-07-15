@@ -1,8 +1,8 @@
-import { ItemView, MarkdownView, TFile, TFolder, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, MarkdownView, TFile, WorkspaceLeaf, setIcon } from 'obsidian';
 import { parseFountainOutline, FountainNode } from './fountain-parser';
 import {
     ScriptStats, ScriptStatsCache, emptyStats, mergeStats, statsFromNodes,
-    listFountainFiles, isFountainFile,
+    isFountainFile,
 } from './fountain-stats';
 import { openTranslationGroup, OpenMember } from './fountain-lang';
 import type FountainPlugin from './main';
@@ -29,7 +29,6 @@ export class FountainOutlineView extends ItemView {
     private listEl: HTMLElement | null = null;
     private statsPanelEl: HTMLElement | null = null;
     private statsScopeEl: HTMLElement | null = null;
-    private statsPathRowEl: HTMLElement | null = null;
     private statsBodyEl: HTMLElement | null = null;
     private lastMarkdownView: MarkdownView | null = null;
     /** Scene keys whose character sub-list is collapsed. Survives refresh() re-renders. */
@@ -103,7 +102,6 @@ export class FountainOutlineView extends ItemView {
         this.listEl = null;
         this.statsPanelEl = null;
         this.statsScopeEl = null;
-        this.statsPathRowEl = null;
         this.statsBodyEl = null;
     }
 
@@ -334,19 +332,10 @@ export class FountainOutlineView extends ItemView {
     private buildStatsPanel(): void {
         this.statsPanelEl = this.contentEl.createDiv({ cls: 'fountain-stats-panel' });
 
-        // Header: title, scope, folder + rescan buttons
+        // Header: title, scope, rescan button
         const header = this.statsPanelEl.createDiv({ cls: 'fountain-stats-header' });
         header.createSpan({ cls: 'fountain-stats-title', text: 'Statistics' });
         this.statsScopeEl = header.createSpan({ cls: 'fountain-stats-scope' });
-
-        const folderBtn = header.createSpan({ cls: 'fountain-stats-btn' });
-        folderBtn.setAttribute('aria-label', 'Choose folder to scan');
-        setIcon(folderBtn, 'folder');
-        folderBtn.addEventListener('click', () => {
-            this.statsPathRowEl?.toggleClass('is-hidden', !this.statsPathRowEl.hasClass('is-hidden'));
-            const input = this.statsPathRowEl?.querySelector('input');
-            if (input && !this.statsPathRowEl!.hasClass('is-hidden')) input.focus();
-        });
 
         const rescanBtn = header.createSpan({ cls: 'fountain-stats-btn' });
         rescanBtn.setAttribute('aria-label', 'Rescan all files');
@@ -356,72 +345,41 @@ export class FountainOutlineView extends ItemView {
             void this.refresh();
         });
 
-        // Folder path input row (hidden until the folder button is clicked)
-        this.statsPathRowEl = this.statsPanelEl.createDiv({ cls: 'fountain-stats-pathrow is-hidden' });
-        const input = this.statsPathRowEl.createEl('input', {
-            type: 'text',
-            placeholder: 'Vault folder to scan — empty scans only the current file',
-        });
-        input.value = this.plugin.settings.statsFolder;
-        const hint = this.statsPathRowEl.createDiv({ cls: 'fountain-stats-pathhint' });
-        const commit = () => {
-            const value = input.value.trim().replace(/^\/+|\/+$/g, '');
-            if (value && !(this.app.vault.getAbstractFileByPath(value) instanceof TFolder)) {
-                hint.setText(`Folder "${value}" not found in this vault.`);
-                return;
-            }
-            hint.setText('');
-            this.plugin.settings.statsFolder = value;
-            void this.plugin.saveSettings();
-            void this.refresh();
-        };
-        input.addEventListener('change', commit);
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
-
         this.statsBodyEl = this.statsPanelEl.createDiv({ cls: 'fountain-stats-body' });
     }
 
     /**
-     * Folder mode (settings.statsFolder set): aggregate every .fountain file in the
-     * folder — cached per file, only the live active file is re-parsed per keystroke.
-     * File mode (no folder): stats for the current file's already-parsed AST.
+     * Aggregate every .fountain file in the vault — cached per file, so only the
+     * live active file is re-parsed per keystroke; the rest come from the mtime cache.
      */
     private async renderStats(activeFile: TFile | null, activeNodes: FountainNode[]): Promise<void> {
         if (!this.statsPanelEl || !this.statsBodyEl || !this.statsScopeEl) return;
 
-        const folder = this.plugin.settings.statsFolder.trim();
+        const files = this.app.vault.getFiles().filter(isFountainFile);
         let stats: ScriptStats | null = null;
-        let scope = '';
+        let scope = 'no .fountain files in vault';
 
-        if (folder) {
-            const files = listFountainFiles(this.app, folder);
-            if (files.length) {
-                stats = emptyStats();
-                for (const file of files) {
-                    if (activeFile && file.path === activeFile.path) {
-                        mergeStats(stats, statsFromNodes(activeNodes));
-                    } else {
-                        mergeStats(stats, await this.statsCache.get(this.app, file));
-                    }
+        if (files.length) {
+            stats = emptyStats();
+            for (const file of files) {
+                if (activeFile && file.path === activeFile.path) {
+                    mergeStats(stats, statsFromNodes(activeNodes));
+                } else {
+                    mergeStats(stats, await this.statsCache.get(this.app, file));
                 }
-                scope = `${plural(files.length, 'file')} in ${folder}/`;
-            } else {
-                scope = `no .fountain files in ${folder}/`;
             }
-        } else if (activeFile) {
-            stats = statsFromNodes(activeNodes);
-            scope = activeFile.basename;
+            scope = `${plural(files.length, 'file')} in vault`;
         }
 
         this.statsScopeEl.setText(scope);
         this.statsBodyEl.empty();
         if (!stats) {
-            this.statsPanelEl.toggleClass('is-hidden', !folder);
+            this.statsPanelEl.removeClass('is-hidden');
             return;
         }
         this.statsPanelEl.removeClass('is-hidden');
 
-        this.renderOverview(stats, folder !== '');
+        this.renderOverview(stats);
         this.renderIntExt(stats);
         this.renderLocations(stats);
         this.renderCharacters(stats);
@@ -451,9 +409,9 @@ export class FountainOutlineView extends ItemView {
         row.createSpan({ cls: 'fountain-stats-value', text: value });
     }
 
-    private renderOverview(stats: ScriptStats, folderMode: boolean): void {
+    private renderOverview(stats: ScriptStats): void {
         const body = this.subpanel('overview', 'Overview', '');
-        if (folderMode) this.statRow(body, 'files', String(stats.files));
+        this.statRow(body, 'files', String(stats.files));
         this.statRow(body, 'scenes', String(stats.scenes));
         this.statRow(body, 'length', `~${stats.pages < 10 ? stats.pages.toFixed(1) : Math.round(stats.pages)} pages`);
         this.statRow(body, 'words', stats.words.toLocaleString());
