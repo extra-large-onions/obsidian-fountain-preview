@@ -82,6 +82,17 @@ export default class FountainPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'export-current-pdf',
+            name: 'Export current .fountain to PDF',
+            checkCallback: (checking) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!isFountainFile(file)) return false;
+                if (!checking) void this.exportFilePdf(file);
+                return true;
+            },
+        });
+
+        this.addCommand({
             id: 'export-stitched-pdf',
             name: 'Export stitched PDF of the whole vault',
             callback: () => { void this.exportStitchedPdf(); },
@@ -92,6 +103,15 @@ export default class FountainPlugin extends Plugin {
             name: 'Export stitched PDF for a specific language…',
             callback: () => { void this.exportStitchedPdfForLanguage(); },
         });
+
+        // Right-click a .fountain file (explorer, tab header, editor menu) → export it alone.
+        this.registerEvent(this.app.workspace.on('file-menu', (menu, file) => {
+            if (!(file instanceof TFile) || !isFountainFile(file)) return;
+            menu.addItem((item) => item
+                .setTitle('Export to PDF')
+                .setIcon('file-text')
+                .onClick(() => { void this.exportFilePdf(file); }));
+        }));
 
         // Keep the project-wide autocomplete vocabulary current: build once the
         // vault is ready, then rebuild (debounced) whenever a .fountain file changes.
@@ -191,6 +211,31 @@ export default class FountainPlugin extends Plugin {
     }
 
     // ─── PDF export ──────────────────────────────────────────────────────────
+
+    /**
+     * Export a single .fountain file as its own screenplay PDF, written beside the
+     * source (foo.en.fountain → foo.en.pdf). No stitching, no language filtering —
+     * what you see in the editor is what you get.
+     */
+    private async exportFilePdf(file: TFile): Promise<void> {
+        // `basename` still carries the .fountain part for files named foo.fountain.txt.
+        const stem = file.basename.replace(/\.fountain$/, '');
+        const folder = file.parent?.path ?? '';
+        const outPath = normalizePath(folder && folder !== '/' ? `${folder}/${stem}.pdf` : `${stem}.pdf`);
+
+        const notice = new Notice(`Fountain: exporting ${file.name} to PDF…`, 0);
+        try {
+            const content = await this.app.vault.cachedRead(file);
+            const pdf = buildStitchedPdf([{ name: stem, content }]);
+            await this.app.vault.adapter.writeBinary(outPath, pdf);
+            notice.hide();
+            new Notice(`Fountain: wrote ${outPath}.`);
+        } catch (err) {
+            notice.hide();
+            console.error('Fountain: PDF export failed', err);
+            new Notice('Fountain: PDF export failed — see developer console for details.');
+        }
+    }
 
     /** Pick a language present in the vault, remember it, then export. */
     private async exportStitchedPdfForLanguage(): Promise<void> {

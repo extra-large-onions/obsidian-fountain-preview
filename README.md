@@ -13,7 +13,7 @@ A screenplay **IDE** for Obsidian. `.fountain` files open in Obsidian's own edit
 ### Outline & stats
 - A sidebar **outline** of scenes, characters, transitions and synopses, with per-scene page/line/word stats and collapsible character lists.
 - A **statistics** panel — for the current file, or aggregated across a whole folder (INT/EXT split, times of day, top locations, top characters).
-- **Stitched PDF export** of every script in a folder, in industry-standard screenplay format.
+- **PDF export** in industry-standard screenplay format — either the current file alone (command *Export current .fountain to PDF*, or right-click → *Export to PDF*, written next to the source as `stem.pdf`) or every script in the vault stitched into one document.
 
 ### Multi-language screenplays
 Name a script's translations `stem.LANG.fountain` with a two-letter code:
