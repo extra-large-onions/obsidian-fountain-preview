@@ -27,6 +27,7 @@ obsidian-fountain/
 │   ├── fountain-stats.ts        Per-script stats, folder scanning, mtime cache
 │   ├── fountain-pdf.ts          Stitch scripts → screenplay-formatted PDF (jsPDF), embedding Cousine
 │   ├── fountain-pdf-font.ts     Cousine TTF (base64) embedded into the PDF for Unicode/Vietnamese
+│   ├── fountain-pdf-font-styles.ts  Cousine Bold / Italic / Bold Italic (base64) for emphasis in the PDF
 │   └── fountain-outline-view.ts ItemView: sidebar outline (single + bilingual) + stats panel
 ├── styles.css                   Editor highlighting + outline/stats/suggest/hover CSS + bundled Cousine @font-face
 ├── manifest.json                Plugin id/name/version
@@ -534,7 +535,7 @@ Per-line classifier (reuses the parser's exported detection helpers) → element
 | transition | right-aligned at 7.5″ | — |
 | centered `> x <` | centered at 4.25″ | — |
 
-Skipped in print: title pages, sections `#`, synopses `=`, notes `[[…]]`, boneyard `/* … */`. Emphasis markers (`**`, `*`, `_`) are stripped to plain text. `===` forces a page break. Keep-together rules: a character cue is never the last line of a page; a scene heading keeps ≥ 2 lines with it. Not implemented: (MORE)/(CONT'D) on dialogue split across pages, dual dialogue columns, exact Final Draft pagination.
+Skipped in print: title pages, sections `#`, synopses `=`, notes `[[…]]`, boneyard `/* … */`. Emphasis prints: `*italic*`, `**bold**`, `***bold italic***`, `_underline_` (a run like `__x__` counts as one marker), nested freely; `\*` / `\_` print literally, and a marker with no partner later on the line prints as typed. `parseEmphasis` turns a line into characters + per-character style, `wrapStyled` wraps those like `wrap`, and the renderer draws each same-style run in its face (Cousine Bold / Italic / Bold Italic from `fountain-pdf-font-styles.ts`, subset to the Regular's characters, same 0.6 em advance) with underline as a drawn rule. `===` forces a page break. Keep-together rules: a character cue is never the last line of a page; a scene heading keeps ≥ 2 lines with it. Not implemented: (MORE)/(CONT'D) on dialogue split across pages, dual dialogue columns, exact Final Draft pagination.
 
 ### Navigation
 

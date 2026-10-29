@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { COUSINE_TTF_BASE64 } from './fountain-pdf-font';
+import { COUSINE_BOLD_TTF_BASE64, COUSINE_ITALIC_TTF_BASE64, COUSINE_BOLD_ITALIC_TTF_BASE64 } from './fountain-pdf-font-styles';
 import {
     skipTitlePage,
     isSceneHeading,
@@ -17,6 +18,8 @@ const FIRST_LINE_Y = 1.0;
 const LAST_LINE_Y = 10.0;
 const PAGE_NUM_Y = 0.6;
 const RIGHT_EDGE = 7.5;
+const UNDERLINE_DROP = 0.025;    // below the baseline
+const UNDERLINE_WIDTH = 0.01;    // ~0.7pt
 
 interface ElementLayout { left: number; width: number; } // width in characters
 
@@ -39,20 +42,133 @@ type ElementType = keyof typeof LAYOUT | 'transition' | 'centered';
 const SCRIPT_FONT = 'Cousine';
 
 function registerScriptFont(doc: jsPDF): void {
-    doc.addFileToVFS('Cousine-Regular.ttf', COUSINE_TTF_BASE64);
-    doc.addFont('Cousine-Regular.ttf', SCRIPT_FONT, 'normal');
+    const faces: [string, string, string][] = [
+        ['Cousine-Regular.ttf', COUSINE_TTF_BASE64, 'normal'],
+        ['Cousine-Bold.ttf', COUSINE_BOLD_TTF_BASE64, 'bold'],
+        ['Cousine-Italic.ttf', COUSINE_ITALIC_TTF_BASE64, 'italic'],
+        ['Cousine-BoldItalic.ttf', COUSINE_BOLD_ITALIC_TTF_BASE64, 'bolditalic'],
+    ];
+    for (const [file, data, style] of faces) {
+        doc.addFileToVFS(file, data);
+        doc.addFont(file, SCRIPT_FONT, style);
+    }
 }
 
 // ─── Text helpers ─────────────────────────────────────────────────────────────
 
-/** Strip fountain inline syntax that has no plain-text meaning: emphasis, notes, lyrics tilde. */
-function stripInline(text: string): string {
+/** Remove fountain syntax that never prints: [[notes]] and the ~ lyrics marker. */
+function cleanInline(text: string): string {
     return text
         .replace(/\[\[[^\]]*\]\]/g, '')   // [[notes]]
-        .replace(/\*+/g, '')              // **bold** *italic*
-        .replace(/(^|\s)_|_(\s|$)/g, '$1$2') // _underline_ markers
         .replace(/^~/, '')                // ~lyrics
+        .normalize('NFC')                 // one character per letter, so widths count right
         .trimEnd();
+}
+
+/** Plain text with the emphasis markers taken out. */
+function stripInline(text: string): string {
+    return parseEmphasis(text).chars.join('');
+}
+
+interface Emphasis { b: boolean; i: boolean; u: boolean; }
+/** Characters (one per code point) and the emphasis of each. */
+interface StyledText { chars: string[]; styles: Emphasis[]; }
+
+const sameEmphasis = (a: Emphasis | undefined, b: Emphasis) => !!a && a.b === b.b && a.i === b.i && a.u === b.u;
+const isWordChar = (c: string | undefined) => !!c && /[\p{L}\p{N}]/u.test(c);
+
+/**
+ * Fountain emphasis: *italic*, **bold**, ***bold italic***, _underline_ (a run
+ * like __x__ counts as one marker). They nest: _**bold underlined**_. \* and \_
+ * print as typed, and so does a marker with no partner later in the line.
+ */
+function parseEmphasis(text: string, upper = false): StyledText {
+    const src = Array.from(cleanInline(text));
+    const chars: string[] = [];
+    const styles: Emphasis[] = [];
+    const st: Emphasis = { b: false, i: false, u: false };
+    const runAt = (k: number, c: string) => { let n = 0; while (src[k + n] === c) n++; return n; };
+    /** Is there a later run of at least `n` stars? */
+    const starsLater = (from: number, n: number) => {
+        for (let k = from; k < src.length; k++) {
+            if (src[k] === '\\') { k++; continue; }
+            if (src[k] === '*') { const m = runAt(k, '*'); if (m >= n) return true; k += m - 1; }
+        }
+        return false;
+    };
+    /** Is there a later underscore run that can close (not followed by a letter)? */
+    const underscoreLater = (from: number) => {
+        for (let k = from; k < src.length; k++) {
+            if (src[k] === '\\') { k++; continue; }
+            if (src[k] === '_') { const m = runAt(k, '_'); if (!isWordChar(src[k + m])) return true; k += m - 1; }
+        }
+        return false;
+    };
+    const push = (c: string) => { chars.push(upper ? c.toUpperCase() : c); styles.push({ ...st }); };
+
+    for (let k = 0; k < src.length; k++) {
+        const c = src[k] ?? '';
+        if (c === '\\' && (src[k + 1] === '*' || src[k + 1] === '_')) { push(src[k + 1] ?? ''); k++; continue; }
+        if (c === '*') {
+            const n = runAt(k, '*');
+            let left = n;
+            if (st.b && left >= 2) { st.b = false; left -= 2; }
+            if (st.i && left >= 1) { st.i = false; left -= 1; }
+            if (left >= 3 && !st.b && !st.i && starsLater(k + n, 3)) { st.b = true; st.i = true; left -= 3; }
+            if (left >= 2 && !st.b && starsLater(k + n, 2)) { st.b = true; left -= 2; }
+            if (left >= 1 && !st.i && starsLater(k + n, 1)) { st.i = true; left -= 1; }
+            for (let j = 0; j < left; j++) push('*');
+            k += n - 1;
+            continue;
+        }
+        if (c === '_') {
+            const n = runAt(k, '_');
+            if (st.u && !isWordChar(src[k + n])) st.u = false;
+            else if (!st.u && !isWordChar(src[k - 1]) && underscoreLater(k + n)) st.u = true;
+            else for (let j = 0; j < n; j++) push('_');
+            k += n - 1;
+            continue;
+        }
+        push(c);
+    }
+    // trim the end (markers can leave trailing spaces)
+    while (chars.length && /\s/.test(chars[chars.length - 1] ?? '')) { chars.pop(); styles.pop(); }
+    return { chars, styles };
+}
+
+/** Word-wrap styled text to `width` characters, the same way as `wrap`. */
+function wrapStyled(t: StyledText, width: number): StyledText[] {
+    const words: [number, number][] = [];
+    for (let k = 0; k < t.chars.length;) {
+        while (k < t.chars.length && /\s/.test(t.chars[k] ?? '')) k++;
+        const a = k;
+        while (k < t.chars.length && !/\s/.test(t.chars[k] ?? '')) k++;
+        if (k > a) words.push([a, k]);
+    }
+    if (!words.length) return [{ chars: [], styles: [] }];
+    const slice = (a: number, b: number): StyledText => ({ chars: t.chars.slice(a, b), styles: t.styles.slice(a, b) });
+    const plain: Emphasis = { b: false, i: false, u: false };
+    const lines: StyledText[] = [];
+    let cur: StyledText | null = null;
+    for (const [start, b] of words) {
+        let a = start;
+        while (b - a > width) {   // hard-break pathological words
+            if (cur) { lines.push(cur); cur = null; }
+            lines.push(slice(a, a + width));
+            a += width;
+        }
+        if (!cur) cur = slice(a, b);
+        else if (cur.chars.length + 1 + (b - a) <= width) {
+            // the space keeps the style it had (an underline runs across it)
+            cur.chars.push(' ');
+            cur.styles.push(a > 0 ? { ...(t.styles[a - 1] ?? plain) } : plain);
+            const w = slice(a, b);
+            cur.chars.push(...w.chars);
+            cur.styles.push(...w.styles);
+        } else { lines.push(cur); cur = slice(a, b); }
+    }
+    if (cur) lines.push(cur);
+    return lines;
 }
 
 function wrap(text: string, width: number): string[] {
@@ -76,7 +192,8 @@ function wrap(text: string, width: number): string[] {
 
 // ─── Classifier ───────────────────────────────────────────────────────────────
 
-interface PrintElement { type: ElementType | 'blank' | 'pagebreak'; text: string; }
+/** `text` keeps the fountain emphasis markers; `upper` prints it in capitals. */
+interface PrintElement { type: ElementType | 'blank' | 'pagebreak'; text: string; upper?: boolean; }
 
 /** Classify one script's lines into printable screenplay elements. */
 function classifyScript(content: string): PrintElement[] {
@@ -130,14 +247,14 @@ function classifyScript(content: string): PrintElement[] {
 
         // Centered  > text <
         if (trimmed.startsWith('>') && trimmed.endsWith('<')) {
-            out.push({ type: 'centered', text: stripInline(trimmed.slice(1, -1).trim()) });
+            out.push({ type: 'centered', text: trimmed.slice(1, -1).trim() });
             prevBlank = false;
             continue;
         }
 
         // Forced transition  > text
         if (trimmed.startsWith('>')) {
-            out.push({ type: 'transition', text: stripInline(trimmed.slice(1).trim()).toUpperCase() });
+            out.push({ type: 'transition', text: trimmed.slice(1).trim(), upper: true });
             prevBlank = false;
             continue;
         }
@@ -145,24 +262,25 @@ function classifyScript(content: string): PrintElement[] {
         const unstyled = trimmed.replace(/^[*_]+/, '').replace(/[*_]+$/, '').trim();
 
         if (isSceneHeading(unstyled, prevBlank)) {
+            // drop a forcing '.', keeping any emphasis markers around it
             const text = (unstyled.startsWith('.') && !unstyled.startsWith('..'))
-                ? unstyled.slice(1).trim()
-                : unstyled;
-            out.push({ type: 'scene', text: stripInline(text).toUpperCase() });
+                ? trimmed.replace(/^([*_]*)\./, '$1')
+                : trimmed;
+            out.push({ type: 'scene', text, upper: true });
             prevBlank = false;
             inDialogue = false;
             continue;
         }
 
         if (isStandardTransition(unstyled, prevBlank)) {
-            out.push({ type: 'transition', text: unstyled });
+            out.push({ type: 'transition', text: trimmed });
             prevBlank = false;
             inDialogue = false;
             continue;
         }
 
         if (isMarkerHeading(unstyled, prevBlank)) {
-            out.push({ type: 'scene', text: unstyled });
+            out.push({ type: 'scene', text: trimmed });
             prevBlank = false;
             inDialogue = false;
             continue;
@@ -170,7 +288,7 @@ function classifyScript(content: string): PrintElement[] {
 
         if (isCharacterName(trimmed, prevBlank, lines[i + 1] ?? '')) {
             const name = trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed;
-            out.push({ type: 'character', text: stripInline(name).replace(/\s*\^\s*$/, '') });
+            out.push({ type: 'character', text: name.replace(/\s*\^\s*$/, '') });
             prevBlank = false;
             inDialogue = true;
             continue;
@@ -179,13 +297,13 @@ function classifyScript(content: string): PrintElement[] {
         if (inDialogue) {
             out.push({
                 type: trimmed.startsWith('(') ? 'parenthetical' : 'dialogue',
-                text: stripInline(trimmed),
+                text: trimmed,
             });
             prevBlank = false;
             continue;
         }
 
-        out.push({ type: 'action', text: stripInline(trimmed) });
+        out.push({ type: 'action', text: trimmed });
         prevBlank = false;
     }
 
@@ -220,10 +338,23 @@ export function buildStitchedPdf(scripts: { name: string; content: string }[]): 
         if (y + (linesNeeded - 1) * LINE_HEIGHT > LAST_LINE_Y) newPage();
     };
 
-    const put = (text: string, x: number, align?: 'right' | 'center') => {
-        if (align === 'right') doc.text(text, x, y, { align: 'right' });
-        else if (align === 'center') doc.text(text, x, y, { align: 'center' });
-        else doc.text(text, x, y);
+    /** One line, each run of the same emphasis in its own font face; underline as a rule. */
+    const put = (line: StyledText, x: number, align?: 'right' | 'center') => {
+        const len = line.chars.length;
+        const x0 = align === 'right' ? x - len * CHAR_WIDTH : align === 'center' ? x - (len * CHAR_WIDTH) / 2 : x;
+        for (let k = 0; k < len;) {
+            const s = line.styles[k] ?? { b: false, i: false, u: false };
+            let e = k + 1;
+            while (e < len && sameEmphasis(line.styles[e], s)) e++;
+            doc.setFont(SCRIPT_FONT, s.b && s.i ? 'bolditalic' : s.b ? 'bold' : s.i ? 'italic' : 'normal');
+            doc.text(line.chars.slice(k, e).join(''), x0 + k * CHAR_WIDTH, y);
+            if (s.u) {
+                doc.setLineWidth(UNDERLINE_WIDTH);
+                doc.line(x0 + k * CHAR_WIDTH, y + UNDERLINE_DROP, x0 + e * CHAR_WIDTH, y + UNDERLINE_DROP);
+            }
+            k = e;
+        }
+        doc.setFont(SCRIPT_FONT, 'normal');
         y += LINE_HEIGHT;
         lastWasBlank = false;
     };
@@ -250,17 +381,17 @@ export function buildStitchedPdf(scripts: { name: string; content: string }[]): 
 
                 case 'transition':
                     ensureRoom(1);
-                    put(el.text, RIGHT_EDGE, 'right');
+                    put(parseEmphasis(el.text, el.upper), RIGHT_EDGE, 'right');
                     break;
 
                 case 'centered':
                     ensureRoom(1);
-                    put(el.text, 4.25, 'center');
+                    put(parseEmphasis(el.text, el.upper), 4.25, 'center');
                     break;
 
                 case 'character': {
                     ensureRoom(2);   // keep the cue with its first dialogue line
-                    put(el.text, LAYOUT.character.left);
+                    put(parseEmphasis(el.text, el.upper), LAYOUT.character.left);
                     break;
                 }
 
@@ -270,7 +401,7 @@ export function buildStitchedPdf(scripts: { name: string; content: string }[]): 
                 case 'dialogue': {
                     const layout = LAYOUT[el.type];
                     if (el.type === 'scene') ensureRoom(3);   // keep heading with following content
-                    for (const line of wrap(el.text, layout.width)) {
+                    for (const line of wrapStyled(parseEmphasis(el.text, el.upper), layout.width)) {
                         ensureRoom(1);
                         put(line, layout.left);
                     }
@@ -284,4 +415,4 @@ export function buildStitchedPdf(scripts: { name: string; content: string }[]): 
 }
 
 /** Rough character-width sanity: exported for tests. */
-export const _internal = { classifyScript, wrap, CHAR_WIDTH };
+export const _internal = { classifyScript, wrap, wrapStyled, parseEmphasis, stripInline, CHAR_WIDTH };
